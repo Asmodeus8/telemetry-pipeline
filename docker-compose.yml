@@ -1,0 +1,37 @@
+services:
+  db:
+    image: timescale/timescaledb:latest-pg17
+    environment:
+      POSTGRES_USER: pipeline
+      POSTGRES_PASSWORD: pipeline
+      POSTGRES_DB: telemetry
+    ports: ["5434:5432"]
+    volumes: [db:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pipeline -d telemetry"]
+      interval: 2s
+      retries: 30
+
+  mqtt:
+    image: eclipse-mosquitto:2
+    ports: ["1883:1883"]
+    volumes: [./deploy/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro]
+
+  pipeline:
+    build: .
+    depends_on:
+      db: { condition: service_healthy }
+      mqtt: { condition: service_started }
+    environment:
+      DATABASE_URL: postgres://pipeline:pipeline@db:5432/telemetry
+      MQTT_URL: tcp://mqtt:1883
+    ports: ["8080:8080"]
+
+  simulate:
+    build: .
+    profiles: [demo]
+    depends_on: [mqtt]
+    entrypoint: ["/usr/local/bin/simulate", "-broker", "tcp://mqtt:1883", "-backfill", "168h", "-step", "5m"]
+
+volumes:
+  db:

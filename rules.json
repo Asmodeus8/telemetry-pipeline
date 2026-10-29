@@ -1,0 +1,6 @@
+[
+  { "name": "low-battery", "device": "inverter-*", "metric": "battery.soc", "op": "<", "threshold": 20, "for": "2m" },
+  { "name": "coldroom-warm", "device": "coldroom-*", "metric": "temp_c", "op": ">", "threshold": 8, "for": "1m" },
+  { "name": "bad-air", "device": "weather-*", "metric": "pm25", "op": ">", "threshold": 55, "for": "5m" },
+  { "name": "device-offline", "device": "*", "offline": "2m" }
+]
