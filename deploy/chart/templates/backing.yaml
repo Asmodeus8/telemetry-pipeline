@@ -112,6 +112,7 @@ spec:
       containers:
         - name: mosquitto
           image: {{ .Values.mqtt.image }}
+          command: [/usr/sbin/mosquitto, -c, /config/mosquitto.conf]
           ports:
             - { name: mqtt, containerPort: 1883 }
           readinessProbe:
@@ -123,11 +124,12 @@ spec:
           resources: {{- toYaml .Values.mqtt.resources | nindent 12 }}
           securityContext: {{- toYaml .Values.securityContext | nindent 12 }}
           volumeMounts:
-            - { name: config, mountPath: /mosquitto/config }
+            - { name: config, mountPath: /config, readOnly: true }
       volumes:
         - name: config
           configMap:
             name: {{ include "tp.fullname" . }}-mqtt
+            defaultMode: 0444
 ---
 apiVersion: v1
 kind: Service
