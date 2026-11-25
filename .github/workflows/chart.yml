@@ -74,4 +74,8 @@ jobs:
         run: |
           kubectl get pods -A -o wide
           kubectl -n telemetry describe pods | tail -n 120
-          kubectl -n telemetry logs -l app.kubernetes.io/component=ingest --tail=80
+          for c in mqtt db ingest api alerts; do
+            echo "--- $c"
+            kubectl -n telemetry logs -l app.kubernetes.io/component=$c --tail=40 --all-containers || true
+            kubectl -n telemetry logs -l app.kubernetes.io/component=$c --tail=40 --previous 2>/dev/null || true
+          done

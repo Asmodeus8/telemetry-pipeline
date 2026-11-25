@@ -79,7 +79,9 @@ metadata:
   labels: {{- include "tp.labels" . | nindent 4 }}
 data:
   mosquitto.conf: |
-    listener 1883
+    # Bind IPv4 explicitly: with no address Mosquitto also binds IPv6 and exits
+    # on clusters where pods have IPv6 disabled.
+    listener 1883 0.0.0.0
     allow_anonymous true
     persistence false
     max_queued_messages 10000
@@ -100,7 +102,7 @@ spec:
     metadata:
       labels: {{- include "tp.selector" $mq | nindent 8 }}
       annotations:
-        checksum/config: {{ "mqtt-v1" | sha256sum | trunc 16 }}
+        checksum/config: {{ "mqtt-v2" | sha256sum | trunc 16 }}
     spec:
       securityContext:
         runAsNonRoot: true
