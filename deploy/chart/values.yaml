@@ -58,7 +58,7 @@ database:
 
 mqtt:
   internal: true
-  image: eclipse-mosquitto:2.0.22
+  image: eclipse-mosquitto:2.0.23
   # Exposed on every node so devices outside the cluster can publish.
   nodePort: 31883
   url: ""
