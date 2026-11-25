@@ -13,9 +13,8 @@ services:
       retries: 30
 
   mqtt:
-    image: eclipse-mosquitto:2.0.23
+    image: emqx/nanomq:0.25.7-slim
     ports: ["1883:1883"]
-    volumes: [./deploy/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro]
 
   pipeline:
     build: .

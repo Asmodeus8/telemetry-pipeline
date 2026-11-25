@@ -72,20 +72,8 @@ spec:
 {{- end }}
 {{- if .Values.mqtt.internal }}
 ---
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: {{ include "tp.fullname" . }}-mqtt
-  labels: {{- include "tp.labels" . | nindent 4 }}
-data:
-  mosquitto.conf: |
-    # Bind IPv4 explicitly: with no address Mosquitto also binds IPv6 and exits
-    # on clusters where pods have IPv6 disabled.
-    listener 1883 0.0.0.0
-    allow_anonymous true
-    persistence false
-    max_queued_messages 10000
----
+# NanoMQ with its defaults: anonymous MQTT on 1883 and MQTT shared subscriptions.
+# (Mosquitto 2.0.20–2.1.4 cannot open any config file on Linux 7.0 hosts.)
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -101,8 +89,6 @@ spec:
   template:
     metadata:
       labels: {{- include "tp.selector" $mq | nindent 8 }}
-      annotations:
-        checksum/config: {{ "mqtt-v2" | sha256sum | trunc 16 }}
     spec:
       securityContext:
         runAsNonRoot: true
@@ -110,9 +96,8 @@ spec:
         runAsGroup: 1883
         seccompProfile: { type: RuntimeDefault }
       containers:
-        - name: mosquitto
+        - name: broker
           image: {{ .Values.mqtt.image }}
-          command: [/usr/sbin/mosquitto, -c, /config/mosquitto.conf]
           ports:
             - { name: mqtt, containerPort: 1883 }
           readinessProbe:
@@ -124,12 +109,11 @@ spec:
           resources: {{- toYaml .Values.mqtt.resources | nindent 12 }}
           securityContext: {{- toYaml .Values.securityContext | nindent 12 }}
           volumeMounts:
-            - { name: config, mountPath: /config, readOnly: true }
+            # The root filesystem is read-only; NanoMQ writes its pid file here.
+            - { name: tmp, mountPath: /tmp }
       volumes:
-        - name: config
-          configMap:
-            name: {{ include "tp.fullname" . }}-mqtt
-            defaultMode: 0444
+        - name: tmp
+          emptyDir: { sizeLimit: 16Mi }
 ---
 apiVersion: v1
 kind: Service

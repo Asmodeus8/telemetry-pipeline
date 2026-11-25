@@ -29,7 +29,7 @@
   <text x="48" y="270" class="s">JSON on devices/{id}/telemetry</text>
 
   <rect class="box" x="262" y="128" width="150" height="96" rx="10"/>
-  <text x="278" y="160" class="t">Mosquitto</text>
+  <text x="278" y="160" class="t">NanoMQ</text>
   <text x="278" y="180" class="s">MQTT broker</text>
   <text x="278" y="200" class="s">QoS 1</text>
   <path class="l" d="M222 95 C244 95 240 156 260 156"/>

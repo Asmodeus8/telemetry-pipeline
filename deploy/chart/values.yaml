@@ -58,13 +58,13 @@ database:
 
 mqtt:
   internal: true
-  image: eclipse-mosquitto:2.0.23
+  image: emqx/nanomq:0.25.7-slim
   # Exposed on every node so devices outside the cluster can publish.
   nodePort: 31883
   url: ""
   resources:
-    requests: { cpu: 10m, memory: 16Mi }
-    limits: { memory: 64Mi }
+    requests: { cpu: 10m, memory: 32Mi }
+    limits: { memory: 128Mi }
 
 simulator:
   # Publishes readings from three made-up Lagos devices.

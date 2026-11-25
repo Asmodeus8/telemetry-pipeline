@@ -106,6 +106,22 @@ The bootstrap creates a three-node [kind](https://kind.sigs.k8s.io) cluster, the
 | http://prometheus.localhost | Prometheus |
 | `localhost:1884` | MQTT for real devices |
 
+![All eight Argo CD applications synced and healthy](docs/k8s-argocd-apps.png)
+
+### Load test
+
+`deploy/load/burst.yaml` replays ten days of readings from four publishers as fast as the broker accepts them:
+
+| | |
+|---|---|
+| Messages | 1.05 million, peaking at about 2,850 a second |
+| Readings written | 3.14 million |
+| Dropped or failed | 0 |
+| p99 batch write | 214 ms |
+| Ingest replicas | autoscaled from 2 to 6 within 40 seconds, back to 2 afterwards |
+
+![Grafana during the load test: messages spread across six ingest pods, write latency, queue depth and broker connections](docs/k8s-grafana.png)
+
 **Release loop:** a push to `main` runs the tests and builds the image. The image goes to `ghcr.io/asmodeus8/telemetry-pipeline:sha-<commit>`, and that tag is committed into `deploy/environments/local/values.yaml`. Argo CD notices the commit and rolls it out. Nothing deploys by running `kubectl` from CI.
 
 **Chart CI:** each change to the chart is linted and schema-checked with kubeconform, including the CRDs. It is then installed on a throwaway kind cluster, where CI runs the smoke test, checks that the shared subscription wrote every reading exactly once, and checks that a rolling restart keeps serving.
