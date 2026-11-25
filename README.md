@@ -1,6 +1,6 @@
 # Telemetry Pipeline
 
-[![test](https://github.com/Asmodeus8/telemetry-pipeline/actions/workflows/test.yml/badge.svg)](https://github.com/Asmodeus8/telemetry-pipeline/actions/workflows/test.yml)
+[![release](https://github.com/Asmodeus8/telemetry-pipeline/actions/workflows/release.yml/badge.svg)](https://github.com/Asmodeus8/telemetry-pipeline/actions/workflows/release.yml) [![chart](https://github.com/Asmodeus8/telemetry-pipeline/actions/workflows/chart.yml/badge.svg)](https://github.com/Asmodeus8/telemetry-pipeline/actions/workflows/chart.yml)
 
 A Go service that takes readings from IoT devices over MQTT, stores them in TimescaleDB, raises alerts when something goes wrong, and serves the data through a REST API, a live stream and a built-in dashboard.
 
