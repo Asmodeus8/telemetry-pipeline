@@ -1,0 +1,72 @@
+{{- if .Values.gateway.enabled }}
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: {{ include "tp.fullname" . }}
+  labels: {{- include "tp.labels" . | nindent 4 }}
+spec:
+  parentRefs:
+    - name: {{ .Values.gateway.parentRef.name }}
+      namespace: {{ .Values.gateway.parentRef.namespace }}
+  hostnames: [{{ .Values.gateway.hostname | quote }}]
+  rules:
+    {{- if .Values.alerts.enabled }}
+    # Only the alerts pod holds rule state, so its endpoint is routed to it directly.
+    - matches:
+        - path: { type: PathPrefix, value: /api/alerts }
+      backendRefs:
+        - name: {{ include "tp.fullname" . }}-alerts
+          port: 8080
+    {{- end }}
+    - matches:
+        - path: { type: PathPrefix, value: / }
+      backendRefs:
+        - name: {{ include "tp.fullname" . }}-api
+          port: 8080
+{{- end }}
+{{- if .Values.networkPolicy.enabled }}
+---
+# Pipeline pods: HTTP only from the gateway, monitoring and this namespace.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "tp.fullname" . }}-pipeline
+  labels: {{- include "tp.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchExpressions:
+      - { key: app.kubernetes.io/instance, operator: In, values: [{{ .Release.Name }}] }
+      - { key: app.kubernetes.io/component, operator: In, values: [ingest, api, alerts] }
+  policyTypes: [Ingress]
+  ingress:
+    - ports:
+        - { port: 8080, protocol: TCP }
+      from:
+        - podSelector: {}
+        - namespaceSelector:
+            matchExpressions:
+              - key: kubernetes.io/metadata.name
+                operator: In
+                values: {{ toJson .Values.networkPolicy.allowFromNamespaces }}
+{{- if .Values.database.internal }}
+---
+# The database accepts connections only from ingest and api.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "tp.fullname" . }}-db
+  labels: {{- include "tp.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels: {{- include "tp.selector" (dict "ctx" . "component" "db") | nindent 6 }}
+  policyTypes: [Ingress]
+  ingress:
+    - ports:
+        - { port: 5432, protocol: TCP }
+      from:
+        - podSelector:
+            matchExpressions:
+              - { key: app.kubernetes.io/instance, operator: In, values: [{{ .Release.Name }}] }
+              - { key: app.kubernetes.io/component, operator: In, values: [ingest, api] }
+{{- end }}
+{{- end }}

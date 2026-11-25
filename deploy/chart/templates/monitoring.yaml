@@ -1,0 +1,87 @@
+{{- if .Values.monitoring.serviceMonitor }}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "tp.fullname" . }}
+  labels: {{- include "tp.labels" . | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      telemetry.asmodeus8.dev/scrape: "true"
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: 15s
+      relabelings:
+        - sourceLabels: [__meta_kubernetes_pod_label_app_kubernetes_io_component]
+          targetLabel: role
+{{- end }}
+{{- if .Values.monitoring.prometheusRule }}
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ include "tp.fullname" . }}
+  labels: {{- include "tp.labels" . | nindent 4 }}
+spec:
+  groups:
+    - name: telemetry-pipeline
+      rules:
+        - alert: TelemetryIngestStalled
+          expr: |
+            sum(rate(telemetry_mqtt_messages_total{role="ingest",result="accepted"}[5m])) > 0
+            and sum(rate(telemetry_readings_written_total[5m])) == 0
+          for: 5m
+          labels: { severity: critical }
+          annotations:
+            summary: Messages are arriving but nothing is being written to TimescaleDB.
+        - alert: TelemetryReadingsDropped
+          expr: sum(increase(telemetry_readings_dropped_total[10m])) > 0
+          labels: { severity: warning }
+          annotations:
+            summary: "{{`{{ $value | humanize }}`}} readings dropped in 10m because the write queue was full."
+        - alert: TelemetryWritesFailing
+          expr: sum(increase(telemetry_readings_failed_total[10m])) > 0
+          labels: { severity: critical }
+          annotations:
+            summary: Batches are failing after every retry; readings are being lost.
+        - alert: TelemetrySlowWrites
+          expr: |
+            histogram_quantile(0.99, sum by (le) (rate(telemetry_batch_write_duration_seconds_bucket[5m]))) > 1
+          for: 10m
+          labels: { severity: warning }
+          annotations:
+            summary: "p99 batch write is {{`{{ $value | humanizeDuration }}`}}."
+        - alert: TelemetryQueueBacklog
+          expr: max(telemetry_batch_queue_length) > 10000
+          for: 5m
+          labels: { severity: warning }
+          annotations:
+            summary: An ingest pod has a large write backlog.
+        - alert: TelemetryBrokerDisconnected
+          expr: min by (pod) (telemetry_mqtt_connected) == 0
+          for: 2m
+          labels: { severity: critical }
+          annotations:
+            summary: "{{`{{ $labels.pod }}`}} has lost its MQTT connection."
+        - alert: TelemetryAlertsDown
+          expr: absent(up{role="alerts"} == 1)
+          for: 5m
+          labels: { severity: critical }
+          annotations:
+            summary: The alert engine is not running, so device alerts will not fire.
+{{- end }}
+{{- if .Values.monitoring.grafanaDashboard }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "tp.fullname" . }}-dashboard
+  labels:
+    {{- include "tp.labels" . | nindent 4 }}
+    grafana_dashboard: "1"
+data:
+  telemetry-pipeline.json: |-
+    {{- .Files.Get "dashboards/telemetry-pipeline.json" | nindent 4 }}
+{{- end }}

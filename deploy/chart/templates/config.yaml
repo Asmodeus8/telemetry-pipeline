@@ -1,0 +1,31 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "tp.fullname" . }}-rules
+  labels: {{- include "tp.labels" . | nindent 4 }}
+data:
+  rules.json: |
+    {{- .Values.rules | toPrettyJson | nindent 4 }}
+{{- if and .Values.database.internal (not .Values.database.existingSecret) }}
+---
+{{- /*
+  Plain `helm install` path: generate a password once and keep it on upgrades.
+  Argo CD renders without cluster access, so lookup returns nothing there and the
+  password would change on every sync; with Argo, set database.existingSecret.
+*/}}
+{{- $name := include "tp.dbSecret" . }}
+{{- $old := lookup "v1" "Secret" .Release.Namespace $name }}
+{{- $pw := randAlphaNum 32 }}
+{{- if $old }}{{ $pw = index $old.data "POSTGRES_PASSWORD" | b64dec }}{{ end }}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ $name }}
+  labels: {{- include "tp.labels" . | nindent 4 }}
+  annotations:
+    helm.sh/resource-policy: keep
+type: Opaque
+stringData:
+  POSTGRES_PASSWORD: {{ $pw | quote }}
+  DATABASE_URL: {{ printf "postgres://%s:%s@%s-db:5432/%s?sslmode=disable" .Values.database.user $pw (include "tp.fullname" .) .Values.database.name | quote }}
+{{- end }}

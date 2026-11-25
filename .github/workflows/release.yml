@@ -1,0 +1,71 @@
+# main → tests → image on GHCR tagged with the commit SHA → tag written into the
+# environment values → Argo CD sees the commit and rolls it out. Git stays the
+# only thing that says what runs in the cluster.
+name: release
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - deploy/environments/**
+      - docs/**
+      - "**.md"
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  test:
+    uses: ./.github/workflows/test.yml
+
+  image:
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      tag: ${{ steps.meta.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: meta
+        run: echo "tag=sha-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          build-args: VERSION=${{ steps.meta.outputs.tag }}
+          tags: |
+            ghcr.io/asmodeus8/telemetry-pipeline:${{ steps.meta.outputs.tag }}
+            ghcr.io/asmodeus8/telemetry-pipeline:latest
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy:
+    needs: image
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Point the local environment at the new image
+        env:
+          TAG: ${{ needs.image.outputs.tag }}
+        run: |
+          sed -i -E "s|^(  tag: ).*|\1${TAG}|" deploy/environments/local/values.yaml
+          git diff --stat
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -am "deploy: telemetry-pipeline ${TAG}"
+          # Pushes made with GITHUB_TOKEN don't trigger workflows, so this can't loop.
+          git push

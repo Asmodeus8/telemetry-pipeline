@@ -1,0 +1,74 @@
+# Validates the Kubernetes side: lint, schema-check the rendered manifests, then
+# install the whole stack on a throwaway kind cluster and prove it works.
+name: chart
+
+on:
+  push:
+    paths: [deploy/**, cmd/**, internal/**, Dockerfile, .github/workflows/chart.yml]
+  pull_request:
+    paths: [deploy/**, cmd/**, internal/**, Dockerfile, .github/workflows/chart.yml]
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+      - name: Lint
+        run: |
+          helm lint deploy/chart
+          helm lint deploy/chart -f deploy/environments/local/values.yaml
+      - name: Schema-check rendered manifests
+        run: |
+          curl -sSL https://github.com/yannh/kubeconform/releases/latest/download/kubeconform-linux-amd64.tar.gz | tar xz
+          helm template telemetry deploy/chart -n telemetry -f deploy/environments/local/values.yaml \
+            | ./kubeconform -strict -summary \
+                -schema-location default \
+                -schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json'
+          ./kubeconform -strict -summary -ignore-missing-schemas deploy/argocd deploy/platform
+
+  e2e:
+    needs: validate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+      - uses: helm/kind-action@v1
+        with:
+          cluster_name: ci
+      - name: Build and load the image
+        run: |
+          docker build -t telemetry-pipeline:ci --build-arg VERSION=ci .
+          kind load docker-image telemetry-pipeline:ci --name ci
+      - name: Install with the simulator
+        run: |
+          helm install telemetry deploy/chart -n telemetry --create-namespace \
+            --set fullnameOverride=telemetry \
+            --set image.repository=telemetry-pipeline,image.tag=ci,image.pullPolicy=Never \
+            --set simulator.enabled=true,simulator.backfill=2h \
+            --set ingest.autoscaling.enabled=false \
+            --wait --timeout 5m
+          kubectl -n telemetry wait --for=condition=complete job/telemetry-backfill --timeout=180s
+      - name: Smoke test
+        run: helm test telemetry -n telemetry --logs
+      - name: Shared subscription writes each reading once
+        run: |
+          sleep 20
+          q() { kubectl -n telemetry exec telemetry-db-0 -- psql -U pipeline -d telemetry -tAc "$1"; }
+          rows=$(q "SELECT count(*) FROM readings")
+          dupes=$(q "SELECT count(*) FROM (SELECT 1 FROM readings GROUP BY time, device, metric HAVING count(*) > 1) d")
+          echo "rows=$rows duplicates=$dupes"
+          test "$rows" -gt 1000
+          test "$dupes" -eq 0
+      - name: Rolling restart keeps serving
+        run: |
+          kubectl -n telemetry rollout restart deploy/telemetry-ingest deploy/telemetry-api
+          kubectl -n telemetry rollout status deploy/telemetry-ingest --timeout=180s
+          kubectl -n telemetry rollout status deploy/telemetry-api --timeout=180s
+          helm test telemetry -n telemetry --logs
+      - name: Diagnostics
+        if: failure()
+        run: |
+          kubectl get pods -A -o wide
+          kubectl -n telemetry describe pods | tail -n 120
+          kubectl -n telemetry logs -l app.kubernetes.io/component=ingest --tail=80

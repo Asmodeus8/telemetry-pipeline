@@ -1,0 +1,30 @@
+# Used by the bootstrap install and by the argocd Application, so Argo CD manages itself.
+configs:
+  params:
+    # TLS ends at the gateway in this local setup.
+    server.insecure: true
+    # kube-prometheus-stack takes longer than the 60s default to render.
+    controller.repo.server.timeout.seconds: 300
+    server.repo.server.timeout.seconds: 300
+  cm:
+    timeout.reconciliation: 60s
+    # Argo CD tracks its own resources by annotation, so other tools' labels don't confuse it.
+    application.resourceTrackingMethod: annotation
+dex:
+  enabled: false
+notifications:
+  enabled: false
+applicationSet:
+  replicas: 1
+server:
+  resources:
+    requests: { cpu: 25m, memory: 64Mi }
+repoServer:
+  resources:
+    requests: { cpu: 25m, memory: 96Mi }
+controller:
+  resources:
+    requests: { cpu: 100m, memory: 256Mi }
+redis:
+  resources:
+    requests: { cpu: 10m, memory: 32Mi }

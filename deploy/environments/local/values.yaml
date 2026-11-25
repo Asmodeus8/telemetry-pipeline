@@ -1,0 +1,25 @@
+fullnameOverride: telemetry
+
+image:
+  repository: ghcr.io/asmodeus8/telemetry-pipeline
+  # Updated by the release workflow on every push to main.
+  tag: latest
+
+database:
+  # Created once by scripts/bootstrap; see the chart's config.yaml for why.
+  existingSecret: telemetry-db
+
+simulator:
+  enabled: true
+
+gateway:
+  enabled: true
+  hostname: telemetry.localhost
+  parentRef:
+    name: gateway
+    namespace: gateway
+
+monitoring:
+  serviceMonitor: true
+  prometheusRule: true
+  grafanaDashboard: true

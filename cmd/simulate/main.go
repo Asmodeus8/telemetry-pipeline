@@ -8,6 +8,7 @@ import (
 	"log"
 	"math"
 	"math/rand/v2"
+	"os"
 	"time"
 
 	mqtt "github.com/eclipse/paho.mqtt.golang"
@@ -88,7 +89,8 @@ func main() {
 	recent := flag.Duration("recent", 10*time.Second, "spacing of backfilled readings in the last hour")
 	flag.Parse()
 
-	c := mqtt.NewClient(mqtt.NewClientOptions().AddBroker(*broker).SetClientID("simulator").SetAutoReconnect(true).SetConnectRetry(true))
+	host, _ := os.Hostname()
+	c := mqtt.NewClient(mqtt.NewClientOptions().AddBroker(*broker).SetClientID("simulator-" + host).SetAutoReconnect(true).SetConnectRetry(true))
 	if t := c.Connect(); t.Wait() && t.Error() != nil {
 		log.Fatal(t.Error())
 	}
@@ -118,6 +120,11 @@ func main() {
 		}
 	}
 
+	if *every <= 0 {
+		c.Disconnect(500)
+		log.Print("backfill done")
+		return
+	}
 	log.Printf("publishing 3 devices every %s to %s", *every, *broker)
 	for now := range time.Tick(*every) {
 		publish(now, *every)

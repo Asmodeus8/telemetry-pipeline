@@ -1,0 +1,9 @@
+apiVersion: v2
+name: telemetry-pipeline
+description: MQTT to TimescaleDB telemetry pipeline, split into ingest, api and alerts roles.
+type: application
+version: 0.1.0
+appVersion: "dev"
+home: https://github.com/Asmodeus8/telemetry-pipeline
+sources:
+  - https://github.com/Asmodeus8/telemetry-pipeline

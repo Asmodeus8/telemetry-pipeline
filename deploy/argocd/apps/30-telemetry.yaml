@@ -1,0 +1,27 @@
+# The pipeline itself. CI writes the new image tag into deploy/environments/local/values.yaml,
+# and this Application rolls it out.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: telemetry
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/Asmodeus8/telemetry-pipeline.git
+    targetRevision: main
+    path: deploy/chart
+    helm:
+      releaseName: telemetry
+      valueFiles: [../environments/local/values.yaml]
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: telemetry
+  syncPolicy:
+    automated: { prune: true, selfHeal: true }
+    syncOptions: [CreateNamespace=true]
+    retry:
+      limit: 5
+      backoff: { duration: 10s, factor: 2, maxDuration: 3m }

@@ -1,0 +1,204 @@
+{{- $db := dict "ctx" . "component" "db" }}
+{{- $mq := dict "ctx" . "component" "mqtt" }}
+{{- if .Values.database.internal }}
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "tp.fullname" . }}-db
+  labels:
+    {{- include "tp.labels" . | nindent 4 }}
+    app.kubernetes.io/component: db
+spec:
+  serviceName: {{ include "tp.fullname" . }}-db
+  replicas: 1
+  selector:
+    matchLabels: {{- include "tp.selector" $db | nindent 6 }}
+  template:
+    metadata:
+      labels: {{- include "tp.selector" $db | nindent 8 }}
+    spec:
+      securityContext:
+        fsGroup: 70
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: timescaledb
+          image: {{ .Values.database.image }}
+          env:
+            - { name: POSTGRES_USER, value: {{ .Values.database.user | quote }} }
+            - { name: POSTGRES_DB, value: {{ .Values.database.name | quote }} }
+            - { name: PGDATA, value: /var/lib/postgresql/data/pgdata }
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "tp.dbSecret" . }}
+                  key: POSTGRES_PASSWORD
+          ports:
+            - { name: postgres, containerPort: 5432 }
+          readinessProbe:
+            exec:
+              command: [sh, -c, 'pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB"']
+            periodSeconds: 5
+          livenessProbe:
+            exec:
+              command: [sh, -c, 'pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB"']
+            periodSeconds: 15
+            failureThreshold: 6
+          resources: {{- toYaml .Values.database.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+          volumeMounts:
+            - { name: data, mountPath: /var/lib/postgresql/data }
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: [ReadWriteOnce]
+        {{- with .Values.database.storageClass }}
+        storageClassName: {{ . }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.database.storage }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "tp.fullname" . }}-db
+  labels: {{- include "tp.labels" . | nindent 4 }}
+spec:
+  selector: {{- include "tp.selector" $db | nindent 4 }}
+  ports:
+    - { name: postgres, port: 5432, targetPort: postgres }
+{{- end }}
+{{- if .Values.mqtt.internal }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "tp.fullname" . }}-mqtt
+  labels: {{- include "tp.labels" . | nindent 4 }}
+data:
+  mosquitto.conf: |
+    listener 1883
+    allow_anonymous true
+    persistence false
+    max_queued_messages 10000
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "tp.fullname" . }}-mqtt
+  labels:
+    {{- include "tp.labels" . | nindent 4 }}
+    app.kubernetes.io/component: mqtt
+spec:
+  replicas: 1
+  strategy: { type: Recreate }
+  selector:
+    matchLabels: {{- include "tp.selector" $mq | nindent 6 }}
+  template:
+    metadata:
+      labels: {{- include "tp.selector" $mq | nindent 8 }}
+      annotations:
+        checksum/config: {{ "mqtt-v1" | sha256sum | trunc 16 }}
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1883
+        runAsGroup: 1883
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: mosquitto
+          image: {{ .Values.mqtt.image }}
+          ports:
+            - { name: mqtt, containerPort: 1883 }
+          readinessProbe:
+            tcpSocket: { port: mqtt }
+            periodSeconds: 5
+          livenessProbe:
+            tcpSocket: { port: mqtt }
+            periodSeconds: 15
+          resources: {{- toYaml .Values.mqtt.resources | nindent 12 }}
+          securityContext: {{- toYaml .Values.securityContext | nindent 12 }}
+          volumeMounts:
+            - { name: config, mountPath: /mosquitto/config }
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "tp.fullname" . }}-mqtt
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "tp.fullname" . }}-mqtt
+  labels: {{- include "tp.labels" . | nindent 4 }}
+spec:
+  selector: {{- include "tp.selector" $mq | nindent 4 }}
+  ports:
+    - { name: mqtt, port: 1883, targetPort: mqtt }
+{{- if .Values.mqtt.nodePort }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "tp.fullname" . }}-mqtt-external
+  labels: {{- include "tp.labels" . | nindent 4 }}
+spec:
+  type: NodePort
+  selector: {{- include "tp.selector" $mq | nindent 4 }}
+  ports:
+    - { name: mqtt, port: 1883, targetPort: mqtt, nodePort: {{ .Values.mqtt.nodePort }} }
+{{- end }}
+{{- end }}
+{{- if .Values.simulator.enabled }}
+{{- $sim := dict "ctx" . "component" "simulator" }}
+---
+# Live readings every two seconds.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "tp.fullname" . }}-simulator
+  labels:
+    {{- include "tp.labels" . | nindent 4 }}
+    app.kubernetes.io/component: simulator
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {{- include "tp.selector" $sim | nindent 6 }}
+  template:
+    metadata:
+      labels: {{- include "tp.selector" $sim | nindent 8 }}
+    spec:
+      securityContext: {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: simulate
+          image: {{ include "tp.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: [/usr/local/bin/simulate, -broker, {{ include "tp.mqttUrl" . | quote }}]
+          resources: {{- toYaml .Values.simulator.resources | nindent 12 }}
+          securityContext: {{- toYaml .Values.securityContext | nindent 12 }}
+---
+# A week of history, published once. A finished Job stays, so syncs don't repeat it.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "tp.fullname" . }}-backfill
+  labels:
+    {{- include "tp.labels" . | nindent 4 }}
+    app.kubernetes.io/component: simulator
+spec:
+  backoffLimit: 3
+  template:
+    metadata:
+      labels: {{- include "tp.selector" $sim | nindent 8 }}
+    spec:
+      restartPolicy: OnFailure
+      securityContext: {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: backfill
+          image: {{ include "tp.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: [/usr/local/bin/simulate, -broker, {{ include "tp.mqttUrl" . | quote }}, -backfill, {{ .Values.simulator.backfill | quote }}, -step, 5m, -every, "0"]
+          resources: {{- toYaml .Values.simulator.resources | nindent 12 }}
+          securityContext: {{- toYaml .Values.securityContext | nindent 12 }}
+{{- end }}

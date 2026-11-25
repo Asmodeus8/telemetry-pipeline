@@ -85,14 +85,27 @@ var migrations = []string{
 	`SELECT add_retention_policy('readings', INTERVAL '30 days', if_not_exists => TRUE)`,
 }
 
+// Migrate is safe to call from several replicas at once: a session advisory lock
+// makes them take turns, and every statement is idempotent.
 func (s *Store) Migrate(ctx context.Context) error {
+	conn, err := s.pool.Acquire(ctx)
+	if err != nil {
+		return err
+	}
+	defer conn.Release()
+	if _, err := conn.Exec(ctx, `SELECT pg_advisory_lock(7310042)`); err != nil {
+		return err
+	}
+	defer conn.Exec(context.Background(), `SELECT pg_advisory_unlock(7310042)`)
 	for _, q := range migrations {
-		if _, err := s.pool.Exec(ctx, q); err != nil {
+		if _, err := conn.Exec(ctx, q); err != nil {
 			return fmt.Errorf("migrate: %w\n%s", err, q)
 		}
 	}
 	return nil
 }
+
+func (s *Store) Ping(ctx context.Context) error { return s.pool.Ping(ctx) }
 
 func (s *Store) Write(ctx context.Context, rs []telemetry.Reading) error {
 	rows := make([][]any, len(rs))

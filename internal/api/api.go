@@ -38,12 +38,19 @@ const maxPoints = 5000
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte("ok")) })
-	mux.HandleFunc("GET /api/devices", s.devices)
-	mux.HandleFunc("GET /api/devices/{id}/latest", s.latest)
-	mux.HandleFunc("GET /api/devices/{id}/readings", s.readings)
-	mux.HandleFunc("GET /api/alerts", s.alerts)
+	// Each role registers only what it can serve; see ROLE in cmd/pipeline.
+	if s.Store != nil {
+		mux.HandleFunc("GET /api/devices", s.devices)
+		mux.HandleFunc("GET /api/devices/{id}/latest", s.latest)
+		mux.HandleFunc("GET /api/devices/{id}/readings", s.readings)
+	}
+	if s.Alerts != nil {
+		mux.HandleFunc("GET /api/alerts", s.alerts)
+	}
 	mux.HandleFunc("GET /api/stats", s.stats)
-	mux.HandleFunc("GET /api/stream", s.stream)
+	if s.Hub != nil {
+		mux.HandleFunc("GET /api/stream", s.stream)
+	}
 	if s.Static != nil {
 		mux.Handle("GET /", http.FileServerFS(s.Static))
 	}
@@ -165,7 +172,10 @@ func (s *Server) alerts(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) stats(w http.ResponseWriter, r *http.Request) {
-	out := map[string]int64{"streamClients": int64(s.Hub.Count())}
+	out := map[string]int64{}
+	if s.Hub != nil {
+		out["streamClients"] = int64(s.Hub.Count())
+	}
 	if s.Stats != nil {
 		for k, v := range s.Stats() {
 			out[k] = v

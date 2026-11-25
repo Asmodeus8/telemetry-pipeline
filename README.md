@@ -70,6 +70,49 @@ To point real devices at it, publish to the broker on port 1883 and leave out th
 | `HTTP_ADDR` | `:8080` |
 | `RULES_FILE` | `/etc/pipeline/rules.json` in the image |
 | `WEBHOOK_URL`, `TELEGRAM_TOKEN`, `TELEGRAM_CHAT_ID` | unset (notifications off) |
+| `ROLE` | `all`; see Kubernetes below |
+
+## Kubernetes and GitOps
+
+The same image runs as three Deployments, each with a different `ROLE`, so each part scales on its own:
+
+| Role | Replicas | What it does |
+|---|---|---|
+| `ingest` | 2–6, autoscaled on CPU | Subscribes through an MQTT **shared subscription** (`$share/ingest/...`), so the broker hands each message to one replica, never all of them. Writes to TimescaleDB. Runs migrations under a Postgres advisory lock. |
+| `api` | 2 | REST, SSE and the dashboard. Every replica takes the full stream for its own live clients. |
+| `alerts` | exactly 1 | The rule engine keeps hold-time state in memory, so two copies would each fire every alert. The HTTPRoute sends `/api/alerts` here. |
+
+On shutdown a pod first leaves the broker, then flushes its write queue, so a rolling deploy loses no accepted readings. Every pod serves `/metrics` and `/readyz`; readiness checks the broker connection and the database.
+
+```
+scripts/bootstrap.ps1        # or scripts/bootstrap.sh
+```
+
+The bootstrap creates a three-node [kind](https://kind.sigs.k8s.io) cluster, the two secrets that must never be in Git (database and Grafana passwords), and Argo CD. Argo CD then installs everything else from this repository, as an app of apps:
+
+| Wave | Application | Source |
+|---|---|---|
+| −2 | Gateway API CRDs | `kubernetes-sigs/gateway-api` v1.7.0 |
+| −1 | Argo CD (managing itself), Traefik as the Gateway, metrics-server | Helm charts |
+| 0 | kube-prometheus-stack | Helm chart |
+| 1 | Routes for the platform UIs | `deploy/platform` |
+| 2 | Telemetry pipeline, with the simulator | `deploy/chart` + `deploy/environments/local` |
+
+| | |
+|---|---|
+| http://telemetry.localhost | dashboard and API |
+| http://argocd.localhost | Argo CD (password printed by the bootstrap) |
+| http://grafana.localhost | Grafana, with the Telemetry Pipeline dashboard |
+| http://prometheus.localhost | Prometheus |
+| `localhost:1884` | MQTT for real devices |
+
+**Release loop:** a push to `main` runs the tests and builds the image. The image goes to `ghcr.io/asmodeus8/telemetry-pipeline:sha-<commit>`, and that tag is committed into `deploy/environments/local/values.yaml`. Argo CD notices the commit and rolls it out. Nothing deploys by running `kubectl` from CI.
+
+**Chart CI:** each change to the chart is linted and schema-checked with kubeconform, including the CRDs. It is then installed on a throwaway kind cluster, where CI runs the smoke test, checks that the shared subscription wrote every reading exactly once, and checks that a rolling restart keeps serving.
+
+**Hardening:** non-root, read-only filesystems, dropped capabilities and seccomp. Also NetworkPolicies (the database accepts only ingest and api; HTTP only from the gateway and monitoring), PodDisruptionBudgets, pods spread across nodes, and `maxUnavailable: 0` rollouts.
+
+**Monitoring:** a ServiceMonitor, a Grafana dashboard loaded from a ConfigMap, and PrometheusRules for stalled ingest, dropped or failed writes, slow writes, queue backlog, lost broker connections and a missing alert engine.
 
 ## Tests
 
@@ -95,7 +138,14 @@ internal/store      TimescaleDB schema, writes and queries
 internal/alerts     rule engine, webhook and Telegram notifiers
 internal/stream     live fan-out hub
 internal/api        REST and SSE handlers
+internal/metrics    Prometheus metrics
 web/static          dashboard (plain HTML, CSS and JS, embedded in the binary)
+deploy/chart        Helm chart
+deploy/argocd       Argo CD app of apps
+deploy/environments values per environment (the image tag CI bumps)
+deploy/platform     routes for the platform UIs
+deploy/kind         local cluster
+scripts             bootstrap
 ```
 
 ## License

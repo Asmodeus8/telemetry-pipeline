@@ -1,0 +1,106 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: argocd
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+spec:
+  project: default
+  sources:
+    - repoURL: https://argoproj.github.io/argo-helm
+      chart: argo-cd
+      targetRevision: 10.19.1
+      helm:
+        releaseName: argocd
+        valueFiles: [$repo/deploy/argocd/argocd-values.yaml]
+    - repoURL: https://github.com/Asmodeus8/telemetry-pipeline.git
+      targetRevision: main
+      ref: repo
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argocd
+  syncPolicy:
+    automated: { prune: true, selfHeal: true }
+    syncOptions: [ServerSideApply=true]
+---
+# Traefik as the Gateway API implementation. Host port 80 → node port 30080 → this gateway.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: gateway
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+spec:
+  project: default
+  source:
+    repoURL: https://traefik.github.io/charts
+    chart: traefik
+    targetRevision: 43.0.0
+    helm:
+      releaseName: traefik
+      valuesObject:
+        providers:
+          kubernetesIngress: { enabled: false }
+          kubernetesCRD: { enabled: false }
+          kubernetesGateway: { enabled: true }
+        gatewayClass:
+          enabled: true
+          name: traefik
+        gateway:
+          enabled: true
+          name: gateway
+          listeners:
+            web:
+              port: 8000
+              protocol: HTTP
+              namespacePolicy:
+                from: All
+        service:
+          spec:
+            type: NodePort
+        ports:
+          web:
+            nodePort: 30080
+          websecure:
+            expose:
+              default: false
+        nodeSelector:
+          kubernetes.io/hostname: telemetry-control-plane
+        tolerations:
+          - key: node-role.kubernetes.io/control-plane
+            operator: Exists
+            effect: NoSchedule
+        resources:
+          requests: { cpu: 25m, memory: 48Mi }
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: gateway
+  syncPolicy:
+    automated: { prune: true, selfHeal: true }
+    syncOptions: [CreateNamespace=true]
+---
+# CPU metrics for the ingest HorizontalPodAutoscaler.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: metrics-server
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+spec:
+  project: default
+  source:
+    repoURL: https://kubernetes-sigs.github.io/metrics-server/
+    chart: metrics-server
+    targetRevision: 3.14.0
+    helm:
+      valuesObject:
+        # kind's kubelets use self-signed certificates.
+        args: [--kubelet-insecure-tls]
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: kube-system
+  syncPolicy:
+    automated: { prune: true, selfHeal: true }

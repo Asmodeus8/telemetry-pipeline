@@ -1,0 +1,165 @@
+{{- $roles := list (dict "name" "ingest" "cfg" .Values.ingest) (dict "name" "api" "cfg" .Values.api) }}
+{{- if .Values.alerts.enabled }}
+{{- $roles = append $roles (dict "name" "alerts" "cfg" .Values.alerts) }}
+{{- end }}
+{{- range $roles }}
+{{- $sel := dict "ctx" $ "component" .name }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "tp.fullname" $ }}-{{ .name }}
+  labels:
+    {{- include "tp.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: {{ .name }}
+spec:
+  {{- if eq .name "alerts" }}
+  # One rule engine only: two would each fire every alert.
+  replicas: 1
+  strategy:
+    type: Recreate
+  {{- else }}
+  {{- if not (and (eq .name "ingest") .cfg.autoscaling.enabled) }}
+  replicas: {{ .cfg.replicas }}
+  {{- end }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  {{- end }}
+  revisionHistoryLimit: 3
+  selector:
+    matchLabels: {{- include "tp.selector" $sel | nindent 6 }}
+  template:
+    metadata:
+      labels: {{- include "tp.selector" $sel | nindent 8 }}
+      annotations:
+        checksum/rules: {{ toJson $.Values.rules | sha256sum | trunc 16 }}
+    spec:
+      securityContext: {{- toYaml $.Values.podSecurityContext | nindent 8 }}
+      terminationGracePeriodSeconds: 30
+      {{- if ne .name "alerts" }}
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels: {{- include "tp.selector" $sel | nindent 14 }}
+      {{- end }}
+      containers:
+        - name: pipeline
+          image: {{ include "tp.image" $ }}
+          imagePullPolicy: {{ $.Values.image.pullPolicy }}
+          env:
+            - name: ROLE
+              value: {{ .name }}
+            - name: MQTT_URL
+              value: {{ include "tp.mqttUrl" $ | quote }}
+            {{- if ne .name "alerts" }}
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "tp.dbSecret" $ }}
+                  key: DATABASE_URL
+            {{- end }}
+            {{- if eq .name "ingest" }}
+            - name: BATCH_SIZE
+              value: {{ .cfg.batchSize | quote }}
+            {{- end }}
+            {{- if eq .name "alerts" }}
+            - name: RULES_FILE
+              value: /config/rules.json
+            {{- end }}
+          {{- if and (eq .name "alerts") $.Values.notifications.existingSecret }}
+          envFrom:
+            - secretRef:
+                name: {{ $.Values.notifications.existingSecret }}
+          {{- end }}
+          ports:
+            - name: http
+              containerPort: 8080
+          startupProbe:
+            # Covers waiting for the database and running migrations.
+            httpGet: { path: /healthz, port: http }
+            periodSeconds: 2
+            failureThreshold: 60
+          livenessProbe:
+            httpGet: { path: /healthz, port: http }
+            periodSeconds: 10
+          readinessProbe:
+            httpGet: { path: /readyz, port: http }
+            periodSeconds: 5
+            failureThreshold: 2
+          lifecycle:
+            # Give endpoints time to drop this pod before it stops accepting.
+            preStop:
+              sleep:
+                seconds: 5
+          resources: {{- toYaml .cfg.resources | nindent 12 }}
+          securityContext: {{- toYaml $.Values.securityContext | nindent 12 }}
+          {{- if eq .name "alerts" }}
+          volumeMounts:
+            - name: rules
+              mountPath: /config
+              readOnly: true
+          {{- end }}
+      {{- if eq .name "alerts" }}
+      volumes:
+        - name: rules
+          configMap:
+            name: {{ include "tp.fullname" $ }}-rules
+      {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "tp.fullname" $ }}-{{ .name }}
+  labels:
+    {{- include "tp.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: {{ .name }}
+    telemetry.asmodeus8.dev/scrape: "true"
+spec:
+  selector: {{- include "tp.selector" $sel | nindent 4 }}
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+{{- if ne .name "alerts" }}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "tp.fullname" $ }}-{{ .name }}
+  labels: {{- include "tp.labels" $ | nindent 4 }}
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels: {{- include "tp.selector" $sel | nindent 6 }}
+{{- end }}
+{{- end }}
+{{- if .Values.ingest.autoscaling.enabled }}
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ include "tp.fullname" . }}-ingest
+  labels: {{- include "tp.labels" . | nindent 4 }}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ include "tp.fullname" . }}-ingest
+  minReplicas: {{ .Values.ingest.autoscaling.minReplicas }}
+  maxReplicas: {{ .Values.ingest.autoscaling.maxReplicas }}
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: {{ .Values.ingest.autoscaling.targetCPUUtilization }}
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 120
+{{- end }}

@@ -1,0 +1,106 @@
+fullnameOverride: ""
+
+image:
+  repository: ghcr.io/asmodeus8/telemetry-pipeline
+  # Defaults to the chart appVersion. CI pins it to a commit SHA in the environment values.
+  tag: ""
+  pullPolicy: IfNotPresent
+
+# Each role is a separate Deployment running the same image with ROLE set.
+ingest:
+  replicas: 2
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 6
+    targetCPUUtilization: 70
+  batchSize: 500
+  resources:
+    requests: { cpu: 50m, memory: 48Mi }
+    limits: { memory: 192Mi }
+
+api:
+  replicas: 2
+  resources:
+    requests: { cpu: 25m, memory: 32Mi }
+    limits: { memory: 128Mi }
+
+alerts:
+  # The rule engine holds state in memory, so it runs as exactly one pod.
+  enabled: true
+  resources:
+    requests: { cpu: 10m, memory: 24Mi }
+    limits: { memory: 64Mi }
+
+rules:
+  - { name: low-battery, device: "inverter-*", metric: battery.soc, op: "<", threshold: 20, for: 2m }
+  - { name: coldroom-warm, device: "coldroom-*", metric: temp_c, op: ">", threshold: 8, for: 1m }
+  - { name: device-offline, device: "*", offline: 2m }
+
+notifications:
+  # Secret with optional keys WEBHOOK_URL, TELEGRAM_TOKEN, TELEGRAM_CHAT_ID.
+  existingSecret: ""
+
+database:
+  # Runs TimescaleDB inside the cluster. Set false and give url/existingSecret for a managed database.
+  internal: true
+  image: timescale/timescaledb:2.31.2-pg17
+  storage: 2Gi
+  storageClass: ""
+  name: telemetry
+  user: pipeline
+  # Secret holding DATABASE_URL (and POSTGRES_PASSWORD for the internal database).
+  # Left empty, the chart creates one with a random password that survives upgrades.
+  existingSecret: ""
+  resources:
+    requests: { cpu: 100m, memory: 256Mi }
+    limits: { memory: 768Mi }
+
+mqtt:
+  internal: true
+  image: eclipse-mosquitto:2.0.22
+  # Exposed on every node so devices outside the cluster can publish.
+  nodePort: 31883
+  url: ""
+  resources:
+    requests: { cpu: 10m, memory: 16Mi }
+    limits: { memory: 64Mi }
+
+simulator:
+  # Publishes readings from three made-up Lagos devices.
+  enabled: false
+  backfill: 168h
+  resources:
+    requests: { cpu: 10m, memory: 16Mi }
+    limits: { memory: 64Mi }
+
+gateway:
+  # Gateway API HTTPRoute: /api/alerts goes to the alerts pod, everything else to api.
+  enabled: false
+  hostname: telemetry.localhost
+  parentRef:
+    name: gateway
+    namespace: gateway
+
+monitoring:
+  # Needs the Prometheus Operator CRDs (kube-prometheus-stack).
+  serviceMonitor: false
+  prometheusRule: false
+  # ConfigMap picked up by the Grafana dashboard sidecar.
+  grafanaDashboard: false
+
+networkPolicy:
+  enabled: true
+  # Namespaces allowed to reach the HTTP ports (gateway, Prometheus).
+  allowFromNamespaces: [gateway, monitoring]
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  seccompProfile: { type: RuntimeDefault }
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities: { drop: [ALL] }

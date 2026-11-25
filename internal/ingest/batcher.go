@@ -24,7 +24,12 @@ type Batcher struct {
 	Dropped  atomic.Int64
 	Written  atomic.Int64
 	Failed   atomic.Int64
+	// OnWrite, if set, is called after every write attempt; used for metrics.
+	OnWrite func(d time.Duration, n int, err error)
 }
+
+// Queued is the number of readings waiting to be written.
+func (b *Batcher) Queued() int { return len(b.in) }
 
 func NewBatcher(w Writer, size int, interval time.Duration, queue int) *Batcher {
 	return &Batcher{w: w, in: make(chan telemetry.Reading, queue), size: size, interval: interval, retries: 3}
@@ -85,8 +90,12 @@ func (b *Batcher) write(batch []telemetry.Reading) {
 	var err error
 	for attempt := 0; attempt <= b.retries; attempt++ {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		start := time.Now()
 		err = b.w.Write(ctx, rs)
 		cancel()
+		if b.OnWrite != nil {
+			b.OnWrite(time.Since(start), len(rs), err)
+		}
 		if err == nil {
 			b.Written.Add(int64(len(rs)))
 			return
