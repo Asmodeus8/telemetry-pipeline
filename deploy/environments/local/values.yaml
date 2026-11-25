@@ -3,7 +3,7 @@ fullnameOverride: telemetry
 image:
   repository: ghcr.io/asmodeus8/telemetry-pipeline
   # Updated by the release workflow on every push to main.
-  tag: sha-9082d27
+  tag: sha-0e8538b
 
 database:
   # Created once by scripts/bootstrap; see the chart's config.yaml for why.
