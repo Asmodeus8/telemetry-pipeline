@@ -4,9 +4,9 @@ name: chart
 
 on:
   push:
-    paths: [deploy/**, cmd/**, internal/**, Dockerfile, .github/workflows/chart.yml]
+    paths: [deploy/**, cmd/**, internal/**, Dockerfile, .github/**]
   pull_request:
-    paths: [deploy/**, cmd/**, internal/**, Dockerfile, .github/workflows/chart.yml]
+    paths: [deploy/**, cmd/**, internal/**, Dockerfile, .github/**]
 
 jobs:
   validate:
